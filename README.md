@@ -17,7 +17,7 @@
 > [!IMPORTANT]
 > Esta es **mi copia de portfolio**. La versión oficial, la que publica la web que usa el instituto, está en la organización del centro: **[IESLACIMURGA/inventario-gimnasio](https://github.com/IESLACIMURGA/inventario-gimnasio)**. Los cambios se hacen allí.
 
-# 🚀 Sobre el Proyecto
+# Sobre el Proyecto
 
 **Inventario del Gimnasio** es la web que usa el **IES Lacimurga** para saber qué material hay en el almacén del gimnasio: cuántas unidades, de qué talla, en qué estado y en qué estantería está. Cada estantería, armario o caja lleva una **etiqueta QR**; al escanearla con el móvil se abre su página con todo lo que contiene.
 
@@ -28,17 +28,17 @@ Los profesores mantienen el inventario en una **hoja de Google Sheets** que ya s
   <p><em>Vista general del inventario (con los datos de ejemplo)</em></p>
 </div>
 
-✨ **Características principales:**
+**Características principales:**
 
-*   🔎 **Buscador y filtros:** Búsqueda por nombre, talla, ubicación o código, filtros por estado y disponibilidad, y navegación por categorías y subcategorías.
-*   🧮 **Cantidades siempre cuadradas:** Las unidades solo se escriben una vez (material + talla + ubicación + estado) y la web calcula todos los totales: disponibles, por talla, por estado y por ubicación.
-*   🏷️ **Estados configurables:** *Disponible*, *Para lavar*, *Dañado*, *Prestado*… cada uno decide si cuenta como disponible.
-*   📍 **Ubicaciones anidadas con QR:** Almacén → estantería → estante → caja. Cada ubicación tiene su QR y se pueden imprimir todas las etiquetas a la vez, en varios tamaños.
-*   📤 **Exportar a Excel** e **imprimir** con estilos propios para papel.
-*   🩺 **Revisión de datos:** Si en la hoja hay un error (un material que no existe, una cantidad negativa…), la web no se rompe: lo marca e indica la fila.
-*   📱 **PWA:** Se instala como app en el móvil y, si no hay conexión, muestra la última copia descargada.
-*   🔐 **Segura por diseño:** Solo lectura, CSP, todo el texto se muestra como texto (protección XSS), fotos limitadas a rutas propias o `https` y exportación protegida contra inyección de fórmulas.
-*   🧪 **26 pruebas automáticas** con el test runner de Node, incluida una que comprueba que los QR generados se leen bien.
+*   **Buscador y filtros:** Búsqueda por nombre, talla, ubicación o código, filtros por estado y disponibilidad, y navegación por categorías y subcategorías.
+*   **Cantidades siempre cuadradas:** Las unidades solo se escriben una vez (material + talla + ubicación + estado) y la web calcula todos los totales: disponibles, por talla, por estado y por ubicación.
+*   **Estados configurables:** *Disponible*, *Para lavar*, *Dañado*, *Prestado*… cada uno decide si cuenta como disponible.
+*   **Ubicaciones anidadas con QR:** Almacén → estantería → estante → caja. Cada ubicación tiene su QR y se pueden imprimir todas las etiquetas a la vez, en varios tamaños.
+*   **Exportar a Excel** e **imprimir** con estilos propios para papel.
+*   **Revisión de datos:** Si en la hoja hay un error (un material que no existe, una cantidad negativa…), la web no se rompe: lo marca e indica la fila.
+*   **PWA:** Se instala como app en el móvil y, si no hay conexión, muestra la última copia descargada.
+*   **Segura por diseño:** Solo lectura, CSP, todo el texto se muestra como texto (protección XSS), fotos limitadas a rutas propias o `https` y exportación protegida contra inyección de fórmulas.
+*   **26 pruebas automáticas** con el test runner de Node, incluida una que comprueba que los QR generados se leen bien.
 
 ### Galería de Funcionalidades
 
@@ -52,7 +52,7 @@ Los profesores mantienen el inventario en una **hoja de Google Sheets** que ya s
   <p><em>En el móvil, la tabla se convierte en fichas</em></p>
 </div>
 
-# 🧠 Contexto del Proyecto
+# Contexto del Proyecto
 
 Es un **proyecto real** para el departamento de Educación Física del **IES Lacimurga**, que necesitaba controlar el material del almacén del gimnasio. Las condiciones eran claras: **coste cero**, **seguro** y que **los datos de los alumnos no salieran del centro**.
 
@@ -65,7 +65,7 @@ Diseñé primero los wireframes en **Figma** y, tras valorar una primera versió
  Cualquiera ──abre──▶ Web en GitHub Pages ──descarga las pestañas y calcula los totales
 ```
 
-# 🛠️ Stack Tecnológico
+# Stack Tecnológico
 
 <div align="center">
   <img src="https://img.shields.io/badge/HTML5-E34F26?style=for-the-badge&logo=html5&logoColor=white" alt="HTML5">
@@ -94,7 +94,7 @@ Diseñé primero los wireframes en **Figma** y, tras valorar una primera versió
 
 </div>
 
-# 📂 Estructura del Proyecto
+# Estructura del Proyecto
 
 ```bash
 inventario-gimnasio-estatico/
@@ -117,7 +117,7 @@ inventario-gimnasio-estatico/
 └── README.md
 ```
 
-# 🚀 Cómo Utilizar el Proyecto
+# Cómo Utilizar el Proyecto
 
 ### 1. Verla online
 
