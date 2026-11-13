@@ -1,3 +1,7 @@
+/**
+ * @module carga
+ * @description Descarga de las hojas (Google Sheets publicado o CSV de ejemplo) y copia local para seguir consultando el inventario sin conexión.
+ */
 /* =====================================================================
    Descarga de las hojas (Google Sheets publicado o CSV de ejemplo) y copia
    local para seguir consultando el inventario si falla la conexión.
@@ -6,6 +10,10 @@
 import { csvAObjetos } from './csv.js';
 import { HOJAS } from './datos.js';
 
+/**
+ * Clave de `localStorage` donde se guarda la última copia de los datos.
+ * @type {string}
+ */
 const CLAVE_CACHE = 'inventario-gimnasio:copia';
 
 /** Construye la URL CSV de una pestaña a partir del enlace publicado y su gid. */
@@ -17,6 +25,11 @@ export function urlHojaGoogle(urlPublicada, gid) {
   return `https://docs.google.com/spreadsheets/d/e/${m[1]}/pub?gid=${String(gid).trim()}&single=true&output=csv`;
 }
 
+/**
+ * URL de cada hoja según la fuente de datos de la configuración.
+ * @param {Object} config configuración de la web.
+ * @returns {Object<string, string>} URL de cada hoja.
+ */
 export function urlsFuente(config) {
   if (config.fuente === 'google') {
     return Object.fromEntries(HOJAS.map((h) => [h, urlHojaGoogle(config.googleUrlPublicada, config.googleGids?.[h])]));
@@ -24,6 +37,12 @@ export function urlsFuente(config) {
   return Object.fromEntries(HOJAS.map((h) => [h, `datos/${h}.csv`]));
 }
 
+/**
+ * Descarga una hoja y comprueba que sea CSV y no la página de error de Google.
+ * @async
+ * @param {string} url dirección de la hoja.
+ * @returns {Promise<string>} contenido CSV.
+ */
 async function descargar(url) {
   const r = await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
   if (!r.ok) throw new Error(`No se pudo descargar una hoja (código ${r.status}).`);
@@ -33,6 +52,9 @@ async function descargar(url) {
   return texto;
 }
 
+/**
+ * @returns {?Object} la copia guardada (textos, origen y fecha), o `null` si no hay.
+ */
 function leerCache() {
   try {
     const c = JSON.parse(localStorage.getItem(CLAVE_CACHE) || 'null');
@@ -40,6 +62,11 @@ function leerCache() {
   } catch { return null; }
 }
 
+/**
+ * Guarda una copia de los CSV descargados con la fecha.
+ * @param {Object<string, string>} textos CSV de cada hoja.
+ * @param {string} origen fuente de los datos.
+ */
 function guardarCache(textos, origen) {
   try { localStorage.setItem(CLAVE_CACHE, JSON.stringify({ textos, origen, fecha: new Date().toISOString() })); } catch { /* sin almacenamiento: no pasa nada */ }
 }
@@ -64,6 +91,11 @@ export async function cargarHojas(config) {
   }
 }
 
+/**
+ * Convierte el CSV de cada hoja en una lista de objetos.
+ * @param {Object<string, string>} textos CSV de cada hoja.
+ * @returns {Object<string, Object[]>} filas de cada hoja.
+ */
 function aObjetos(textos) {
   return Object.fromEntries(HOJAS.map((h) => [h, csvAObjetos(textos[h] || '')]));
 }

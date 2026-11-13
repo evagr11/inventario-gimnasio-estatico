@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: app.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: app.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>/**
+ * @module app
+ * @description Interfaz de la web. Toda la página se crea con `h()`, que usa `textContent`: ningún dato de la hoja se inserta como HTML (protección contra XSS).
+ */
+/* =====================================================================
+   Interfaz de la web del inventario.
+   Toda la página se construye con el ayudante h(), que crea elementos con
+   textContent: ningún dato de la hoja se inserta como HTML, así que un
+   texto malicioso en una celda no puede ejecutar código (protección XSS).
+   ===================================================================== */
+
+import { CONFIG } from './config.js';
+import { cargarHojas } from './carga.js';
+import {
+  construirModelo, filtrar, ordenar, estadisticas, contenidoUbicacion,
+  filasExportacion, clave, compararTallas,
+} from './datos.js';
+import { aCSVExcel } from './csv.js';
+import { qrSVG } from './qr.js';
+
+/**
+ * Estado de la web: el modelo cargado, la fecha de los datos y si vienen de la copia local.
+ * @type {Object}
+ */
+const estado = { modelo: null, fecha: null, desdeCopia: false };
+const $ = (sel) => document.querySelector(sel);
+const fmt = new Intl.NumberFormat('es-ES');
+
+/* ---------- Ayudante para crear elementos de forma segura ---------- */
+/**
+ * Crea un elemento HTML de forma segura.
+ * @param {string} tag etiqueta.
+ * @param {Object} [attrs] atributos; `class`, `style`, `dataset` y los que empiezan por `on` (eventos) se tratan aparte.
+ * @param {...*} hijos elementos o textos hijos.
+ * @returns {HTMLElement}
+ */
+function h(tag, attrs = {}, ...hijos) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'style') Object.entries(v).forEach(([p, val]) => { if (val != null) el.style.setProperty(p, val); });
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'dataset') Object.assign(el.dataset, v);
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  anadir(el, hijos);
+  return el;
+}
+/**
+ * Añade hijos a un elemento; los textos se añaden como nodos de texto.
+ * @param {HTMLElement} el elemento.
+ * @param {Array} hijos hijos, también anidados.
+ */
+function anadir(el, hijos) {
+  hijos.flat(Infinity).forEach((c) => {
+    if (c == null || c === false) return;
+    el.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  });
+}
+const vaciar = (el, ...hijos) => { el.replaceChildren(); anadir(el, hijos); return el; };
+
+/* ---------- Rutas (#/…) ---------- */
+/**
+ * Lee la ruta de la dirección (`#/vista/id?parámetros`).
+ * @returns {{vista: string, id: string, params: URLSearchParams}}
+ */
+function leerRuta() {
+  const [ruta, query = ''] = location.hash.replace(/^#\/?/, '').split('?');
+  const partes = ruta.split('/').map((p) => { try { return decodeURIComponent(p); } catch { return p; } });
+  return { vista: partes[0] || 'inventario', id: partes[1] || '', params: new URLSearchParams(query) };
+}
+/**
+ * Construye un enlace interno `#/vista/id?parámetros`.
+ * @param {string} vista vista.
+ * @param {string} [id] identificador.
+ * @param {?Object} [params] parámetros; los vacíos se omiten.
+ * @returns {string}
+ */
+function enlace(vista, id = '', params = null) {
+  let s = `#/${vista}${id ? `/${encodeURIComponent(id)}` : ''}`;
+  if (params) {
+    const p = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => { if (v !== '' &amp;&amp; v != null &amp;&amp; !(k === 'p' &amp;&amp; v === 1)) p.set(k, v); });
+    const q = p.toString();
+    if (q) s += `?${q}`;
+  }
+  return s;
+}
+const ir = (destino) => { if (location.hash !== destino) location.hash = destino; else pintar(); };
+
+/**
+ * Dirección completa de una ubicación, la que llevan los QR de las etiquetas.
+ * @param {string} codigo código de la ubicación.
+ * @returns {string}
+ */
+function urlUbicacion(codigo) {
+  const base = CONFIG.urlPublica || `${location.origin}${location.pathname}`;
+  return `${base.replace(/#.*$/, '')}#/ubicacion/${encodeURIComponent(codigo)}`;
+}
+
+/* ---------- Piezas reutilizables ---------- */
+/**
+ * @param {?Object} cat categoría.
+ * @returns {HTMLElement} etiqueta con el nombre y el color de la categoría.
+ */
+function chipCategoria(cat) {
+  if (!cat || !cat.ruta.length) return h('span', { class: 'chip chip-gris' }, 'Sin categoría');
+  return h('span', { class: 'chip', style: { '--chip': cat.color || '#e6e1da' } }, cat.nombre);
+}
+/**
+ * @param {Object} est estado.
+ * @param {number} [cantidad] unidades en ese estado.
+ * @returns {HTMLElement} etiqueta del estado con su color.
+ */
+function chipEstado(est, cantidad) {
+  return h('span', { class: 'chip-estado', style: { '--estado': est.color } },
+    h('span', { class: 'punto', 'aria-hidden': 'true' }),
+    cantidad != null ? `${est.nombre}: ${fmt.format(cantidad)}` : est.nombre);
+}
+/**
+ * @param {?Object} u ubicación.
+ * @param {boolean} [enlaces=true] si cada nivel es un enlace.
+ * @returns {HTMLElement} la ruta «Almacén › Estantería › Balda».
+ */
+function rutaUbicacion(u, enlaces = true) {
+  if (!u) return h('span', { class: 'tenue' }, 'Sin ubicación');
+  return h('span', { class: 'ruta-ubi' }, u.ruta.map((x, i) => [
+    i ? h('span', { class: 'sep', 'aria-hidden': 'true' }, '›') : null,
+    enlaces ? h('a', { href: enlace('ubicacion', x.codigo) }, x.nombre) : x.nombre,
+  ]));
+}
+/**
+ * Foto del material o, si no tiene o no carga, el icono de su categoría.
+ * @param {Object} m material.
+ * @param {boolean} [grande=false] tamaño grande, para la ficha.
+ * @returns {HTMLElement}
+ */
+function miniatura(m, grande = false) {
+  const contenedor = h('div', { class: grande ? 'foto-grande' : 'miniatura', style: { '--fondo-cat': m.categoria.color || '#e9e4dd' } });
+  const icono = m.categoria.ruta[0]?.icono || '📦';
+  const ponerIcono = () => vaciar(contenedor, h('span', { class: 'icono-foto', 'aria-hidden': 'true' }, icono));
+  if (m.fotos.length) {
+    const img = h('img', { src: m.fotos[0], alt: grande ? `Foto de ${m.nombre}` : '', loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer' });
+    img.addEventListener('error', ponerIcono, { once: true });
+    contenedor.append(img);
+  } else ponerIcono();
+  return contenedor;
+}
+const textoDisponibles = (d, t) => `${fmt.format(d)} ${d === 1 ? 'disponible' : 'disponibles'} de ${fmt.format(t)}`;
+/**
+ * @param {string} titulo título.
+ * @param {string} [texto] explicación.
+ * @param {HTMLElement} [accion] botón o enlace.
+ * @returns {HTMLElement} mensaje de «no hay resultados».
+ */
+function vacio(titulo, texto, accion) {
+  return h('div', { class: 'vacio' }, h('div', { class: 'vacio-icono', 'aria-hidden': 'true' }, '🔍'),
+    h('h3', {}, titulo), texto ? h('p', {}, texto) : null, accion || null);
+}
+/**
+ * @param {string} titulo título.
+ * @param {number} valor cifra.
+ * @param {string} sub texto debajo.
+ * @returns {HTMLElement} tarjeta con una cifra del resumen.
+ */
+function tarjetaDato(titulo, valor, sub) {
+  return h('div', { class: 'dato' }, h('div', { class: 'dato-titulo' }, titulo),
+    h('div', { class: 'dato-valor' }, fmt.format(valor)), h('div', { class: 'dato-sub' }, sub));
+}
+/**
+ * @param {string} tipo «error», «aviso» o «ok».
+ * @param {...*} contenido contenido.
+ * @returns {HTMLElement} caja de aviso.
+ */
+function aviso(tipo, ...contenido) {
+  return h('div', { class: `aviso aviso-${tipo}`, role: tipo === 'error' ? 'alert' : 'status' }, ...contenido);
+}
+
+/* ---------- Barra lateral ---------- */
+/**
+ * Pinta la barra lateral con el árbol de categorías y marca la vista actual.
+ */
+function pintarLateral() {
+  const { modelo } = estado;
+  const ruta = leerRuta();
+  const catActiva = ruta.vista === 'inventario' ? ruta.params.get('cat') || '' : null;
+  const lista = $('#lista-categorias');
+  const abiertas = new Set();
+  if (catActiva) modelo.categorias.get(catActiva)?.ruta.forEach((c) => abiertas.add(c.k));
+
+  const item = (c, nivel) => {
+    const hijos = c.hijos.filter((x) => x.visible);
+    const activa = catActiva === c.k;
+    const abierta = abiertas.has(c.k);
+    const li = h('li', { class: `nivel-${Math.min(nivel, 2)}` });
+    const fila = h('div', { class: `cat-fila${activa ? ' activa' : ''}` },
+      h('a', { href: enlace('inventario', '', { cat: c.k }), 'aria-current': activa ? 'page' : null },
+        nivel === 0 ? h('span', { class: 'cat-icono', 'aria-hidden': 'true' }, c.icono || '•') : null,
+        h('span', {}, c.nombre)),
+      hijos.length ? h('button', {
+        class: `cat-desplegar${abierta ? ' abierta' : ''}`, type: 'button',
+        'aria-expanded': String(abierta), 'aria-label': `${abierta ? 'Ocultar' : 'Mostrar'} subcategorías de ${c.nombre}`,
+        onclick: (e) => {
+          const ab = e.currentTarget.classList.toggle('abierta');
+          e.currentTarget.setAttribute('aria-expanded', String(ab));
+          li.querySelector(':scope > ul')?.toggleAttribute('hidden', !ab);
+        },
+      }, '▸') : null);
+    li.append(fila);
+    if (hijos.length) li.append(h('ul', { class: 'subcategorias', hidden: !abierta }, hijos.map((x) => item(x, nivel + 1))));
+    return li;
+  };
+
+  vaciar(lista,
+    h('li', { class: 'nivel-0' }, h('div', { class: `cat-fila${catActiva === '' ? ' activa' : ''}` },
+      h('a', { href: enlace('inventario'), 'aria-current': catActiva === '' ? 'page' : null },
+        h('span', { class: 'cat-icono', 'aria-hidden': 'true' }, '📦'), h('span', {}, 'Todos los materiales')))),
+    modelo.categoriasRaiz.filter((c) => c.visible).map((c) => item(c, 0)));
+
+  document.querySelectorAll('.nav-secundaria a').forEach((a) => {
+    const v = a.getAttribute('href').replace(/^#\//, '');
+    const actual = ruta.vista === v || (v === 'ubicaciones' &amp;&amp; ruta.vista === 'ubicacion');
+    if (actual) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+
+  const hora = estado.fecha ? estado.fecha.toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' }) : '';
+  vaciar($('#info-datos'), estado.desdeCopia ? `Copia guardada del ${hora}` : `Datos cargados: ${hora}`);
+}
+
+/* ---------- Vista: inventario ---------- */
+/**
+ * Listado de materiales con buscador, filtros, orden, resumen y paginación.
+ * @param {URLSearchParams} params filtros de la dirección.
+ * @returns {HTMLElement[]}
+ */
+function vistaInventario(params) {
+  const { modelo } = estado;
+  const f = {
+    texto: params.get('q') || '',
+    categoria: params.get('cat') || '',
+    estado: params.get('estado') || '',
+    disponibilidad: params.get('disp') || '',
+    orden: params.get('orden') || 'nombre',
+    p: Math.max(1, parseInt(params.get('p'), 10) || 1),
+  };
+  const buscador = $('#buscador');
+  if (document.activeElement !== buscador) buscador.value = f.texto;
+
+  const cat = f.categoria ? modelo.categorias.get(f.categoria) : null;
+  if (f.categoria &amp;&amp; (!cat || !cat.visible)) {
+    return [vacio('Esa categoría no existe', 'Puede que se haya renombrado o desactivado en la hoja.',
+      h('a', { class: 'boton', href: enlace('inventario') }, 'Ver todos los materiales'))];
+  }
+  const cambiar = (cambios) => ir(enlace('inventario', '', { q: f.texto, cat: f.categoria, estado: f.estado, disp: f.disponibilidad, orden: f.orden, p: 1, ...cambios }));
+
+  const enCat = filtrar(modelo, { categoria: f.categoria });
+  const st = estadisticas(modelo, enCat);
+  const lista = ordenar(filtrar(modelo, f), f.orden);
+  estado.ultimaLista = lista;
+
+  const paginas = Math.max(1, Math.ceil(lista.length / CONFIG.porPagina));
+  const pagina = Math.min(f.p, paginas);
+  const trozo = lista.slice((pagina - 1) * CONFIG.porPagina, pagina * CONFIG.porPagina);
+
+  const titulo = cat ? cat.nombre : 'Todos los materiales';
+  const subtitulo = cat
+    ? (cat.padre ? cat.ruta.slice(0, -1).map((c) => c.nombre).join(' › ') : 'Inventario de la categoría')
+    : 'Inventario general del almacén del instituto';
+
+  const subcats = cat ? cat.hijos.filter((c) => c.visible) : [];
+  const estadosIncidencia = [...st.porEstado.entries()].filter(([e, n]) => !e.disponible &amp;&amp; n > 0)
+    .sort((a, b) => a[0].orden - b[0].orden);
+
+  const opcionesEstado = [...modelo.estados.values()].filter((e) => e.activo || e.k === f.estado)
+    .sort((a, b) => a.orden - b.orden);
+
+  const filas = trozo.map((m) => {
+    const incidencias = [...m.porEstado.entries()].filter(([e, n]) => !e.disponible &amp;&amp; n > 0);
+    const tallas = m.variantes.filter((v) => v.variante);
+    const ubis = [...m.ubicaciones];
+    return h('tr', { class: 'fila-material', tabindex: '0', onclick: (e) => { if (!e.target.closest('a')) ir(enlace('material', m.codigo)); },
+      onkeydown: (e) => { if (e.key === 'Enter' &amp;&amp; !e.target.closest('a')) ir(enlace('material', m.codigo)); } },
+    h('td', { class: 'c-material' }, h('div', { class: 'celda-material' }, miniatura(m),
+      h('div', {}, h('a', { class: 'nombre-material', href: enlace('material', m.codigo) }, m.nombre),
+        h('div', { class: 'codigo' }, m.codigo)))),
+    h('td', { 'data-etiqueta': 'Categoría' }, chipCategoria(m.categoria)),
+    h('td', { class: 'c-cantidad', 'data-etiqueta': 'Disponibles' }, h('span', {},
+      h('strong', { class: m.disponibles > 0 ? '' : 'agotado' }, fmt.format(m.disponibles)),
+      h('span', { class: 'de-total' }, ` de ${fmt.format(m.total)}`))),
+    h('td', { 'data-etiqueta': 'Talla' }, tallas.length
+      ? h('div', { class: 'tallas' }, tallas.map((v) => h('span', { class: `talla${v.disponibles > 0 ? '' : ' talla-agotada'}`, title: `${v.disponibles} disponibles de ${v.total}` }, v.variante)))
+      : h('span', { class: 'tenue' }, '–')),
+    h('td', { 'data-etiqueta': 'Ubicación', class: 'c-ubicacion' }, ubis.length
+      ? ubis.slice(0, 2).map((u) => h('div', {}, h('a', { href: enlace('ubicacion', u.codigo) }, u.nombre)))
+        .concat(ubis.length > 2 ? [h('div', { class: 'tenue' }, `y ${ubis.length - 2} más`)] : [])
+      : h('span', { class: 'tenue' }, '–')),
+    h('td', { 'data-etiqueta': 'Estado / notas', class: 'c-notas' },
+      incidencias.length ? h('div', { class: 'estados' }, incidencias.map(([e, n]) => chipEstado(e, n))) : null,
+      m.notas ? h('div', { class: 'nota' }, m.notas) : null,
+      !incidencias.length &amp;&amp; !m.notas ? h('span', { class: 'tenue' }, '–') : null));
+  });
+
+  const hayFiltros = f.texto || f.estado || f.disponibilidad;
+
+  return [
+    h('header', { class: 'cabecera-vista' }, h('div', {},
+      h('h1', {}, titulo), h('p', { class: 'subtitulo' }, subtitulo))),
+    modelo.avisos.length ? aviso('info', `Hay ${modelo.avisos.length} ${modelo.avisos.length === 1 ? 'dato' : 'datos'} de la hoja que conviene revisar. `,
+      h('a', { href: enlace('avisos') }, 'Ver detalles')) : null,
+    h('section', { class: 'datos-resumen', 'aria-label': 'Resumen' },
+      tarjetaDato('Total materiales', st.materiales, 'referencias registradas'),
+      tarjetaDato('Unidades totales', st.unidades, `${fmt.format(st.disponibles)} disponibles ahora`),
+      cat
+        ? tarjetaDato('Subcategorías', subcats.length, subcats.length === 1 ? 'subcategoría' : 'subcategorías')
+        : tarjetaDato('Categorías', st.categoriasActivas, 'categorías activas'),
+      tarjetaDato('Ubicaciones', st.ubicacionesUsadas, 'ubicaciones utilizadas')),
+    estadosIncidencia.length ? h('section', { class: 'incidencias', 'aria-label': 'Unidades no disponibles' },
+      h('span', { class: 'incidencias-titulo' }, 'No disponibles:'),
+      estadosIncidencia.map(([e, n]) => h('button', {
+        type: 'button', class: `boton-estado${f.estado === e.k ? ' activo' : ''}`, 'aria-pressed': String(f.estado === e.k),
+        onclick: () => cambiar({ estado: f.estado === e.k ? '' : e.k }),
+      }, chipEstado(e, n)))) : null,
+    subcats.length ? h('nav', { class: 'subcats-chips', 'aria-label': 'Subcategorías' },
+      subcats.map((c) => h('a', { class: 'chip-enlace', href: enlace('inventario', '', { cat: c.k }) }, c.nombre))) : null,
+    h('section', { class: 'panel-tabla' },
+      h('div', { class: 'panel-tabla-cabecera' },
+        h('h2', {}, f.texto ? `Resultados para «${f.texto}»` : 'Inventario',
+          h('span', { class: 'contador' }, ` · ${lista.length} ${lista.length === 1 ? 'material' : 'materiales'}`)),
+        h('div', { class: 'controles' },
+          h('label', { class: 'control' }, h('span', { class: 'solo-lector' }, 'Estado'),
+            h('select', { onchange: (e) => cambiar({ estado: e.target.value }) },
+              h('option', { value: '' }, 'Todos los estados'),
+              opcionesEstado.map((e) => h('option', { value: e.k, selected: f.estado === e.k }, e.nombre)))),
+          h('label', { class: 'control' }, h('span', { class: 'solo-lector' }, 'Disponibilidad'),
+            h('select', { onchange: (e) => cambiar({ disp: e.target.value }) },
+              h('option', { value: '' }, 'Cualquier disponibilidad'),
+              h('option', { value: 'si', selected: f.disponibilidad === 'si' }, 'Con unidades disponibles'),
+              h('option', { value: 'no', selected: f.disponibilidad === 'no' }, 'Sin unidades disponibles'))),
+          h('label', { class: 'control control-orden' }, h('span', { class: 'solo-lector' }, 'Ordenar por'),
+            h('select', { onchange: (e) => cambiar({ orden: e.target.value }) },
+              [['nombre', 'Nombre (A-Z)'], ['nombre-desc', 'Nombre (Z-A)'], ['disponibles', 'Más disponibles'],
+                ['total', 'Más unidades'], ['categoria', 'Categoría']]
+                .map(([v, t]) => h('option', { value: v, selected: f.orden === v }, `Ordenar: ${t}`)))))),
+      lista.length
+        ? h('div', { class: 'tabla-scroll' }, h('table', { class: 'tabla' },
+          h('thead', {}, h('tr', {}, ['Material', 'Categoría', 'Disponibles', 'Talla', 'Ubicación', 'Estado / notas'].map((t) => h('th', { scope: 'col' }, t)))),
+          h('tbody', {}, filas)))
+        : vacio('No hay materiales que coincidan',
+          hayFiltros ? 'Prueba con otra palabra o quita algún filtro.' : 'Todavía no hay materiales en esta categoría.',
+          hayFiltros ? h('button', { class: 'boton', type: 'button', onclick: () => ir(enlace('inventario', '', { cat: f.categoria })) }, 'Quitar filtros') : null),
+      paginas > 1 ? paginacion(pagina, paginas, (p) => ir(enlace('inventario', '', { ...Object.fromEntries(params), p }))) : null),
+  ];
+}
+
+/**
+ * @param {number} actual página actual.
+ * @param {number} total número de páginas.
+ * @param {Function} irA recibe la página elegida.
+ * @returns {?HTMLElement} los botones de página, o `null` si solo hay una.
+ */
+function paginacion(actual, total, irA) {
+  const nums = [];
+  for (let i = 1; i &lt;= total; i++) {
+    if (i === 1 || i === total || Math.abs(i - actual) &lt;= 1) nums.push(i);
+    else if (nums[nums.length - 1] !== '…') nums.push('…');
+  }
+  return h('nav', { class: 'paginacion', 'aria-label': 'Páginas' },
+    h('button', { type: 'button', class: 'pag-flecha', disabled: actual === 1, onclick: () => irA(actual - 1) }, '◂ Anterior'),
+    nums.map((n) => (n === '…' ? h('span', { class: 'pag-hueco' }, '…')
+      : h('button', { type: 'button', class: `pag-num${n === actual ? ' actual' : ''}`, 'aria-current': n === actual ? 'page' : null, onclick: () => irA(n) }, String(n)))),
+    h('button', { type: 'button', class: 'pag-flecha', disabled: actual === total, onclick: () => irA(actual + 1) }, 'Siguiente ▸'));
+}
+
+/* ---------- Vista: detalle de material ---------- */
+/**
+ * Ficha de un material: foto, datos y existencias por variante, ubicación y estado.
+ * @param {string} codigo código del material.
+ * @returns {HTMLElement[]}
+ */
+function vistaMaterial(codigo) {
+  const m = estado.modelo.materiales.get(clave(codigo));
+  if (!m || !m.visible) {
+    return [vacio('No encontramos ese material', 'Puede que se haya retirado del inventario o que el código haya cambiado.',
+      h('a', { class: 'boton', href: enlace('inventario') }, 'Volver al inventario'))];
+  }
+  const fotoPrincipal = miniatura(m, true);
+  const galeria = m.fotos.length > 1 ? h('div', { class: 'galeria' }, m.fotos.map((src, i) => h('button', {
+    type: 'button', class: `galeria-mini${i === 0 ? ' activa' : ''}`, 'aria-label': `Ver foto ${i + 1}`,
+    onclick: (e) => {
+      const img = fotoPrincipal.querySelector('img');
+      if (img) img.src = src;
+      e.currentTarget.parentElement.querySelectorAll('.galeria-mini').forEach((b) => b.classList.remove('activa'));
+      e.currentTarget.classList.add('activa');
+    },
+  }, h('img', { src, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' })))) : null;
+
+  const unica = m.variantes.length === 1 &amp;&amp; !m.variantes[0].variante;
+  const estadosOrd = (mapa) => [...mapa.entries()].filter(([, n]) => n > 0).sort((a, b) => a[0].orden - b[0].orden);
+
+  return [
+    h('nav', { class: 'migas', 'aria-label': 'Ruta' },
+      h('a', { href: enlace('inventario') }, 'Inventario'),
+      m.categoria.ruta.map((c) => [h('span', { class: 'sep' }, '›'), h('a', { href: enlace('inventario', '', { cat: c.k }) }, c.nombre)])),
+    h('article', { class: 'ficha' },
+      h('div', { class: 'ficha-fotos' }, fotoPrincipal, galeria),
+      h('div', { class: 'ficha-info' },
+        h('div', { class: 'ficha-etiquetas' }, chipCategoria(m.categoria), h('span', { class: 'codigo' }, m.codigo)),
+        h('h1', {}, m.nombre),
+        m.descripcion ? h('p', { class: 'descripcion' }, m.descripcion) : null,
+        h('div', { class: 'ficha-numeros' },
+          h('div', { class: 'numero-grande' }, h('strong', { class: m.disponibles ? '' : 'agotado' }, fmt.format(m.disponibles)), h('span', {}, m.disponibles === 1 ? 'disponible' : 'disponibles')),
+          h('div', { class: 'numero-grande' }, h('strong', {}, fmt.format(m.total)), h('span', {}, 'unidades en total'))),
+        estadosOrd(m.porEstado).length ? h('div', { class: 'estados' }, estadosOrd(m.porEstado).map(([e, n]) => chipEstado(e, n))) : null,
+        m.notas ? h('p', { class: 'nota-ficha' }, h('strong', {}, 'Notas: '), m.notas) : null,
+        h('dl', { class: 'fechas' },
+          m.alta ? [h('dt', {}, 'Alta'), h('dd', {}, m.alta)] : null,
+          m.actualizado ? [h('dt', {}, 'Última modificación'), h('dd', {}, m.actualizado)] : null))),
+    !unica &amp;&amp; m.variantes.length ? h('section', { class: 'bloque' },
+      h('h2', {}, 'Por talla o variante'),
+      h('div', { class: 'variantes' }, m.variantes.map((v) => h('div', { class: 'variante' },
+        h('div', { class: 'variante-cab' }, h('span', { class: 'talla talla-grande' }, v.variante || 'Única'),
+          h('span', {}, h('strong', {}, fmt.format(v.disponibles)), ` ${v.disponibles === 1 ? 'disponible' : 'disponibles'} de ${fmt.format(v.total)}`)),
+        h('ul', {}, estadosOrd(v.porEstado).map(([e, n]) => h('li', {}, chipEstado(e), h('span', { class: 'n' }, fmt.format(n))))))))) : null,
+    h('section', { class: 'bloque' },
+      h('h2', {}, 'Dónde está'),
+      m.lineas.length ? h('div', { class: 'tabla-scroll' }, h('table', { class: 'tabla tabla-simple' },
+        h('thead', {}, h('tr', {}, (unica ? [] : ['Talla / variante']).concat(['Ubicación', 'Estado', 'Cantidad']).map((t) => h('th', { scope: 'col' }, t)))),
+        h('tbody', {}, [...m.lineas].sort((a, b) => compararTallas(a.variante, b.variante) || a.estado.orden - b.estado.orden)
+          .map((l) => h('tr', {},
+            unica ? null : h('td', { 'data-etiqueta': 'Variante' }, l.variante || 'Única'),
+            h('td', { 'data-etiqueta': 'Ubicación' }, rutaUbicacion(l.ubicacion)),
+            h('td', { 'data-etiqueta': 'Estado' }, chipEstado(l.estado)),
+            h('td', { 'data-etiqueta': 'Cantidad', class: 'num' }, fmt.format(l.cantidad))))),
+        h('tfoot', {}, h('tr', {}, h('td', { colspan: unica ? 2 : 3 }, 'Total'), h('td', { class: 'num' }, fmt.format(m.total))))))
+        : vacio('Sin existencias registradas', 'Añade filas para este código en la pestaña «Existencias» de la hoja.')),
+  ];
+}
+
+/* ---------- Vista: ubicaciones ---------- */
+/**
+ * @param {Object} u ubicación.
+ * @returns {number} unidades guardadas en ella y en las que cuelgan de ella.
+ */
+function unidadesEn(u) {
+  return u.lineas.reduce((s, l) => s + (l.material.visible ? l.cantidad : 0), 0) + u.hijos.reduce((s, x) => s + unidadesEn(x), 0);
+}
+/**
+ * Árbol de ubicaciones con las unidades de cada una.
+ * @returns {HTMLElement[]}
+ */
+function vistaUbicaciones() {
+  const arbol = (lista) => h('ul', { class: 'arbol' }, lista.filter((u) => u.activa).map((u) => h('li', {},
+    h('a', { class: 'arbol-item', href: enlace('ubicacion', u.codigo) },
+      h('span', { class: 'arbol-nombre' }, u.nombre, u.tipo ? h('span', { class: 'tenue' }, ` · ${u.tipo}`) : null),
+      h('span', { class: 'arbol-n' }, `${fmt.format(unidadesEn(u))} uds.`)),
+    u.hijos.length ? arbol(u.hijos) : null)));
+  return [
+    h('header', { class: 'cabecera-vista' }, h('div', {}, h('h1', {}, 'Ubicaciones'),
+      h('p', { class: 'subtitulo' }, 'Estanterías, armarios, burros, cajas y zonas del almacén')),
+    h('a', { class: 'boton boton-secundario', href: enlace('etiquetas') }, '▦ Imprimir etiquetas QR')),
+    estado.modelo.ubicacionesRaiz.length
+      ? h('section', { class: 'panel-tabla panel-arbol' }, arbol(estado.modelo.ubicacionesRaiz))
+      : vacio('No hay ubicaciones', 'Añádelas en la pestaña «Ubicaciones» de la hoja.'),
+  ];
+}
+
+/**
+ * Contenido de una ubicación, la página a la que lleva el QR de cada estantería.
+ * @param {string} codigo código de la ubicación.
+ * @param {URLSearchParams} params opciones de la dirección.
+ * @returns {HTMLElement[]}
+ */
+function vistaUbicacion(codigo, params) {
+  const u = estado.modelo.ubicaciones.get(clave(codigo));
+  if (!u) {
+    return [vacio('Esta ubicación no existe', 'Puede que la etiqueta QR sea antigua o que el código se haya cambiado en la hoja.',
+      h('a', { class: 'boton', href: enlace('ubicaciones') }, 'Ver todas las ubicaciones'))];
+  }
+  const incluirHijas = params.get('solo') !== '1';
+  const grupos = contenidoUbicacion(u, incluirHijas);
+  const total = grupos.reduce((s, g) => s + g.total, 0);
+  const qr = qrSVG(urlUbicacion(u.codigo), { titulo: `Código QR de ${u.nombre}` });
+  qr.classList.add('qr-mini');
+
+  return [
+    h('nav', { class: 'migas', 'aria-label': 'Ruta' }, h('a', { href: enlace('ubicaciones') }, 'Ubicaciones'),
+      u.ruta.slice(0, -1).map((x) => [h('span', { class: 'sep' }, '›'), h('a', { href: enlace('ubicacion', x.codigo) }, x.nombre)])),
+    h('header', { class: 'cabecera-vista cabecera-ubicacion' },
+      h('div', {},
+        h('div', { class: 'ficha-etiquetas' }, u.tipo ? h('span', { class: 'chip chip-gris' }, u.tipo) : null, h('span', { class: 'codigo' }, u.codigo),
+          !u.activa ? h('span', { class: 'chip chip-gris' }, 'Inactiva') : null),
+        h('h1', {}, u.nombre),
+        u.descripcion ? h('p', { class: 'subtitulo' }, u.descripcion) : null,
+        h('p', { class: 'resumen-ubi' }, h('strong', {}, fmt.format(total)), ` unidades · ${grupos.length} ${grupos.length === 1 ? 'material' : 'materiales'}`)),
+      h('div', { class: 'qr-caja' }, qr, h('a', { class: 'boton boton-secundario', href: enlace('etiquetas', '', { u: u.codigo }) }, 'Imprimir etiqueta'))),
+    u.hijos.length ? h('section', { class: 'bloque' },
+      h('div', { class: 'bloque-cab' }, h('h2', {}, 'Dentro de esta ubicación'),
+        h('label', { class: 'interruptor' }, h('input', { type: 'checkbox', checked: incluirHijas,
+          onchange: (e) => ir(enlace('ubicacion', u.codigo, { solo: e.target.checked ? '' : '1' })) }),
+        ' Incluir su contenido en la lista')),
+      h('div', { class: 'subcats-chips' }, u.hijos.map((x) => h('a', { class: 'chip-enlace', href: enlace('ubicacion', x.codigo) }, `${x.nombre} · ${fmt.format(unidadesEn(x))}`)))) : null,
+    h('section', { class: 'bloque' },
+      h('h2', {}, 'Material'),
+      grupos.length ? h('div', { class: 'tabla-scroll' }, h('table', { class: 'tabla tabla-simple' },
+        h('thead', {}, h('tr', {}, ['Material', 'Talla / variante', 'Estado', 'Sitio', 'Cantidad'].map((t) => h('th', { scope: 'col' }, t)))),
+        grupos.map((g) => h('tbody', { class: 'grupo' },
+          g.lineas.map((l, i) => h('tr', {},
+            i === 0 ? h('td', { rowspan: g.lineas.length, class: 'c-material' }, h('div', { class: 'celda-material' }, miniatura(g.material),
+              h('div', {}, h('a', { class: 'nombre-material', href: enlace('material', g.material.codigo) }, g.material.nombre),
+                h('div', { class: 'codigo' }, textoDisponibles(g.disponibles, g.total))))) : null,
+            h('td', { 'data-etiqueta': 'Variante' }, l.variante || '–'),
+            h('td', { 'data-etiqueta': 'Estado' }, chipEstado(l.estado)),
+            h('td', { 'data-etiqueta': 'Sitio' }, l.ubicacion === u ? h('span', { class: 'tenue' }, 'Aquí') : h('a', { href: enlace('ubicacion', l.ubicacion.codigo) }, l.ubicacion.nombre)),
+            h('td', { 'data-etiqueta': 'Cantidad', class: 'num' }, fmt.format(l.cantidad))))))))
+        : vacio('Esta ubicación está vacía', 'No hay ninguna fila en «Existencias» con esta ubicación.')),
+  ];
+}
+
+/* ---------- Vista: etiquetas QR ---------- */
+/**
+ * Etiquetas con QR de las ubicaciones elegidas, listas para imprimir.
+ * @param {URLSearchParams} params ubicaciones marcadas.
+ * @returns {HTMLElement[]}
+ */
+function vistaEtiquetas(params) {
+  const todas = [...estado.modelo.ubicaciones.values()].sort((a, b) =>
+    a.ruta.map((x) => x.nombre).join('/').localeCompare(b.ruta.map((x) => x.nombre).join('/'), 'es', { numeric: true }));
+  const pedida = params.get('u');
+  const seleccion = new Set(todas.filter((u) => (pedida ? clave(u.codigo) === clave(pedida) : u.activa)).map((u) => u.k));
+  let tamano = params.get('t') === 'grande' ? 'grande' : 'normal';
+
+  const hoja = h('div', { class: 'hoja-etiquetas' });
+  const repintar = () => {
+    hoja.className = `hoja-etiquetas tam-${tamano}`;
+    vaciar(hoja, todas.filter((u) => seleccion.has(u.k)).map((u) => h('div', { class: 'etiqueta' },
+      qrSVG(urlUbicacion(u.codigo), { titulo: `QR de ${u.nombre}` }),
+      h('div', { class: 'etiqueta-texto' },
+        h('div', { class: 'etiqueta-nombre' }, u.nombre),
+        u.padre ? h('div', { class: 'etiqueta-ruta' }, u.ruta.slice(0, -1).map((x) => x.nombre).join(' › ')) : null,
+        h('div', { class: 'etiqueta-codigo' }, u.codigo),
+        h('div', { class: 'etiqueta-centro' }, `${CONFIG.centro} · Almacén`)))));
+    if (!seleccion.size) hoja.append(h('p', { class: 'tenue sin-imprimir' }, 'Marca al menos una ubicación.'));
+  };
+  repintar();
+
+  const entradas = new Map();
+  const casillas = todas.map((u) => {
+    const input = h('input', { type: 'checkbox', checked: seleccion.has(u.k), onchange: (e) => { if (e.target.checked) seleccion.add(u.k); else seleccion.delete(u.k); repintar(); } });
+    entradas.set(u.k, input);
+    return h('label', { class: `casilla nivel-ubi-${Math.min(u.ruta.length - 1, 3)}` },
+      input, ` ${u.nombre}`, h('span', { class: 'tenue' }, ` (${u.codigo})`), !u.activa ? h('span', { class: 'tenue' }, ' · inactiva') : null);
+  });
+  const marcar = (todasMarcadas) => {
+    seleccion.clear();
+    todas.forEach((u) => { if (todasMarcadas) seleccion.add(u.k); entradas.get(u.k).checked = todasMarcadas; });
+    repintar();
+  };
+
+  const avisoUrl = !CONFIG.urlPublica &amp;&amp; /^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname)
+    ? aviso('aviso', 'Estás abriendo la web desde tu ordenador: los QR apuntarían a esta dirección local. Rellena ', h('code', {}, 'urlPublica'), ' en js/config.js antes de imprimir.')
+    : null;
+
+  return [
+    h('header', { class: 'cabecera-vista sin-imprimir' }, h('div', {}, h('h1', {}, 'Etiquetas QR'),
+      h('p', { class: 'subtitulo' }, 'Al escanearlas con el móvil se abre la página de esa ubicación con todo lo que contiene.')),
+    h('button', { class: 'boton', type: 'button', onclick: () => window.print() }, '🖨 Imprimir')),
+    avisoUrl,
+    h('section', { class: 'panel-tabla opciones-etiquetas sin-imprimir' },
+      h('div', { class: 'opciones-fila' },
+        h('button', { type: 'button', class: 'boton boton-secundario', onclick: () => marcar(true) }, 'Marcar todas'),
+        h('button', { type: 'button', class: 'boton boton-secundario', onclick: () => marcar(false) }, 'Desmarcar'),
+        h('label', { class: 'control' }, 'Tamaño ',
+          h('select', { onchange: (e) => { tamano = e.target.value; repintar(); } },
+            h('option', { value: 'normal', selected: tamano === 'normal' }, 'Normal (3 por fila)'),
+            h('option', { value: 'grande', selected: tamano === 'grande' }, 'Grande (2 por fila)')))),
+      h('div', { class: 'casillas' }, casillas)),
+    hoja,
+  ];
+}
+
+/* ---------- Vista: avisos de datos ---------- */
+/**
+ * Problemas encontrados en la hoja (filas repetidas, padres que no existen…).
+ * @returns {HTMLElement[]}
+ */
+function vistaAvisos() {
+  const a = estado.modelo.avisos;
+  return [
+    h('header', { class: 'cabecera-vista' }, h('div', {}, h('h1', {}, 'Revisión de datos'),
+      h('p', { class: 'subtitulo' }, 'Filas de la hoja de cálculo con algún problema. Corrígelas en la hoja y pulsa «Actualizar datos».'))),
+    a.length ? h('section', { class: 'panel-tabla' }, h('ul', { class: 'lista-avisos' }, a.map((t) => h('li', {}, t))))
+      : vacio('Todo correcto', 'No hay ningún problema en los datos de la hoja.'),
+  ];
+}
+
+/* ---------- Pintar la vista actual ---------- */
+/**
+ * Pinta la vista de la dirección actual, o un aviso si hay un error.
+ */
+function pintar() {
+  const main = $('#contenido');
+  if (!estado.modelo) return;
+  const r = leerRuta();
+  let vista;
+  try {
+    vista = {
+      inventario: () => vistaInventario(r.params),
+      material: () => vistaMaterial(r.id),
+      ubicaciones: () => vistaUbicaciones(),
+      ubicacion: () => vistaUbicacion(r.id, r.params),
+      etiquetas: () => vistaEtiquetas(r.params),
+      avisos: () => vistaAvisos(),
+    }[r.vista];
+    vista = vista ? vista() : [vacio('Página no encontrada', '', h('a', { class: 'boton', href: enlace('inventario') }, 'Ir al inventario'))];
+  } catch (e) {
+    console.error(e);
+    vista = [aviso('error', 'Ha ocurrido un error al mostrar esta página. Recarga la web; si se repite, revisa la hoja de datos.')];
+  }
+  if (r.vista !== 'inventario') $('#buscador').value = '';
+  const avisoCopia = estado.desdeCopia ? aviso('aviso', 'No se han podido descargar los datos actuales; estás viendo la última copia guardada en este dispositivo.') : null;
+  vaciar(main, avisoCopia, vista);
+  pintarLateral();
+  document.title = `${({ material: 'Material', ubicacion: 'Ubicación', ubicaciones: 'Ubicaciones', etiquetas: 'Etiquetas QR', avisos: 'Revisión de datos' })[r.vista] || 'Inventario'} · ${CONFIG.titulo}`;
+  document.body.classList.remove('menu-abierto');
+}
+
+/* ---------- Exportar ---------- */
+/**
+ * Descarga un CSV para Excel con los materiales que se están viendo.
+ */
+function exportar() {
+  if (!estado.modelo) return;
+  const r = leerRuta();
+  let mats;
+  if (r.vista === 'inventario' &amp;&amp; estado.ultimaLista) mats = estado.ultimaLista;
+  else if (r.vista === 'material') mats = [estado.modelo.materiales.get(clave(r.id))].filter(Boolean);
+  else mats = ordenar([...estado.modelo.materiales.values()].filter((m) => m.visible));
+  const blob = new Blob([aCSVExcel(filasExportacion(mats))], { type: 'text/csv;charset=utf-8' });
+  const a = h('a', { href: URL.createObjectURL(blob), download: `inventario-gimnasio-${new Date().toISOString().slice(0, 10)}.csv` });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+/* ---------- Arranque ---------- */
+/**
+ * Descarga los datos, construye el modelo y pinta la página; si falla, enseña el error con un botón para reintentar.
+ * @async
+ */
+async function cargar() {
+  const main = $('#contenido');
+  vaciar(main, h('div', { class: 'cargando', role: 'status' }, h('div', { class: 'girador', 'aria-hidden': 'true' }), 'Cargando inventario…'));
+  try {
+    const { hojas, fecha, desdeCopia } = await cargarHojas(CONFIG);
+    estado.modelo = construirModelo(hojas);
+    estado.fecha = fecha;
+    estado.desdeCopia = desdeCopia;
+    pintar();
+  } catch (e) {
+    console.error(e);
+    vaciar(main, aviso('error', h('strong', {}, 'No se ha podido cargar el inventario. '), e.message || '',
+      h('div', {}, h('button', { class: 'boton', type: 'button', onclick: cargar }, 'Reintentar'))));
+  }
+}
+
+/**
+ * Pone los textos de la configuración, conecta el buscador, los botones y los atajos de teclado, registra el service worker y carga los datos.
+ */
+function iniciar() {
+  document.querySelectorAll('[data-centro]').forEach((el) => { el.textContent = CONFIG.centro; });
+  document.querySelectorAll('[data-subtitulo]').forEach((el) => { el.textContent = CONFIG.subtitulo; });
+  document.querySelectorAll('[data-titulo]').forEach((el) => { el.textContent = CONFIG.titulo; });
+  const logo = $('#logo-img');
+  if (CONFIG.logo) {
+    logo.addEventListener('load', () => document.body.classList.add('con-logo'), { once: true });
+    logo.src = CONFIG.logo;
+  }
+
+  let temporizador;
+  $('#buscador').addEventListener('input', (e) => {
+    clearTimeout(temporizador);
+    temporizador = setTimeout(() => {
+      const r = leerRuta();
+      const p = r.vista === 'inventario' ? Object.fromEntries(r.params) : {};
+      ir(enlace('inventario', '', { ...p, q: e.target.value.trim(), p: 1 }));
+    }, 180);
+  });
+  $('#form-busqueda').addEventListener('submit', (e) => e.preventDefault());
+  $('#boton-exportar').addEventListener('click', exportar);
+  $('#boton-actualizar').addEventListener('click', cargar);
+  $('#boton-menu').addEventListener('click', () => document.body.classList.toggle('menu-abierto'));
+  $('#velo').addEventListener('click', () => document.body.classList.remove('menu-abierto'));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') document.body.classList.remove('menu-abierto');
+    if (e.key === '/' &amp;&amp; !/input|select|textarea/i.test(document.activeElement.tagName)) { e.preventDefault(); $('#buscador').focus(); }
+  });
+  window.addEventListener('hashchange', () => { pintar(); window.scrollTo(0, 0); });
+
+  if ('serviceWorker' in navigator &amp;&amp; location.protocol === 'https:') {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+  cargar();
+}
+
+iniciar();
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Modules</h3><ul><li><a href="module-app.html">app</a></li><li><a href="module-carga.html">carga</a></li><li><a href="module-config.html">config</a></li><li><a href="module-csv.html">csv</a></li><li><a href="module-datos.html">datos</a></li><li><a href="module-qr.html">qr</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.5</a>
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

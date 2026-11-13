@@ -4,6 +4,7 @@
 
 <div align="center">
   <a href="https://github.com/IESLACIMURGA/inventario-gimnasio" target="_blank"><img src="https://img.shields.io/badge/Repo_Oficial-2F3B45?style=for-the-badge&logo=github&logoColor=white" alt="Repositorio oficial"></a>
+  <a href="https://evagr11.github.io/inventario-gimnasio-estatico/docs/" target="_blank"><img src="https://img.shields.io/badge/Documentación_(JSDoc)-2F3B45?style=for-the-badge&logo=javascript&logoColor=white" alt="Documentación del código"></a>
   <a href="https://ieslacimurga.github.io/inventario-gimnasio/" target="_blank"><img src="https://img.shields.io/badge/Ver_Web-5B7387?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Ver Web"></a>
   <a href="https://www.figma.com/design/wk6avKTmmMpyyWOytJhW6S/inventario" target="_blank"><img src="https://img.shields.io/badge/Ver_Figma-2F3B45?style=for-the-badge&logo=figma&logoColor=white" alt="Ver Figma"></a>
   <a href="MANUAL.md"><img src="https://img.shields.io/badge/Manual-9DB4C6?style=for-the-badge&logo=bookstack&logoColor=black" alt="Manual"></a>

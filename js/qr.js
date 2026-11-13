@@ -1,3 +1,7 @@
+/**
+ * @module qr
+ * @description Generador de códigos QR propio (nivel de corrección M), sin librerías externas, para las etiquetas de las estanterías.
+ */
 /* =====================================================================
    Generador de códigos QR sin dependencias externas.
    Codifica texto (UTF-8) en modo byte con corrección de errores nivel M,
@@ -11,6 +15,10 @@ const ECC_POR_BLOQUE_M = [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22
 const BLOQUES_M = [-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16,
   17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49];
 
+/**
+ * @param {number} ver versión del QR.
+ * @returns {number} módulos disponibles para datos en esa versión.
+ */
 function modulosDatosBrutos(ver) {
   let r = (16 * ver + 128) * ver + 64;
   if (ver >= 2) {
@@ -21,10 +29,20 @@ function modulosDatosBrutos(ver) {
   return r;
 }
 
+/**
+ * @param {number} ver versión del QR.
+ * @returns {number} bytes de datos que caben con el nivel M.
+ */
 function codewordsDatos(ver) {
   return Math.floor(modulosDatosBrutos(ver) / 8) - ECC_POR_BLOQUE_M[ver] * BLOQUES_M[ver];
 }
 
+/**
+ * Multiplicación en el cuerpo de Galois GF(256), la base de la corrección de errores Reed-Solomon.
+ * @param {number} x primer factor.
+ * @param {number} y segundo factor.
+ * @returns {number} producto.
+ */
 function multGF(x, y) {
   let z = 0;
   for (let i = 7; i >= 0; i--) {
@@ -34,6 +52,10 @@ function multGF(x, y) {
   return z & 0xff;
 }
 
+/**
+ * @param {number} grado número de bytes de corrección.
+ * @returns {number[]} polinomio divisor de Reed-Solomon.
+ */
 function divisorRS(grado) {
   const r = new Array(grado).fill(0);
   r[grado - 1] = 1;
@@ -48,6 +70,12 @@ function divisorRS(grado) {
   return r;
 }
 
+/**
+ * Calcula los bytes de corrección de un bloque de datos.
+ * @param {number[]} datos bytes del bloque.
+ * @param {number[]} divisor polinomio de Reed-Solomon.
+ * @returns {number[]} bytes de corrección.
+ */
 function restoRS(datos, divisor) {
   const r = new Array(divisor.length).fill(0);
   for (const b of datos) {
@@ -58,6 +86,11 @@ function restoRS(datos, divisor) {
   return r;
 }
 
+/**
+ * @param {number} x número.
+ * @param {number} i posición del bit.
+ * @returns {boolean} si ese bit vale 1.
+ */
 function bit(x, i) { return ((x >>> i) & 1) !== 0; }
 
 /** Devuelve una matriz booleana (true = módulo oscuro) para el texto dado. */

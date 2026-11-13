@@ -1,8 +1,17 @@
+/**
+ * @module csv
+ * @description Lectura de CSV y exportación para Excel.
+ */
 /* =====================================================================
    Lector de CSV (RFC 4180): comillas, comas y saltos de línea dentro de
    celdas, BOM inicial y finales de línea de Windows.
    ===================================================================== */
 
+/**
+ * Lee un CSV (RFC 4180): comillas, comas y saltos de línea dentro de celdas, BOM inicial y finales de línea de Windows.
+ * @param {string} texto contenido del CSV.
+ * @returns {string[][]} filas no vacías, cada una con sus celdas.
+ */
 export function parsearCSV(texto) {
   if (texto.charCodeAt(0) === 0xfeff) texto = texto.slice(1);
   const filas = [];
@@ -44,6 +53,11 @@ export function normalizarClave(s) {
   return quitarAcentos(String(s).trim().toLowerCase()).replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
+/**
+ * Quita tildes y diéresis.
+ * @param {string} s texto.
+ * @returns {string} texto sin acentos.
+ */
 export function quitarAcentos(s) {
   return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '');
 }

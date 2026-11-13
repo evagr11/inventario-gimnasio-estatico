@@ -1,8 +1,16 @@
+/**
+ * @module config
+ * @description Configuración de la web: textos, logo, origen de los datos (demo o Google Sheets), dirección pública para los QR y materiales por página.
+ */
 /* =====================================================================
    CONFIGURACIÓN — es el único archivo que hay que tocar para poner la
    web en marcha. Las instrucciones paso a paso están en MANUAL.md.
    ===================================================================== */
 
+/**
+ * Opciones de la web. Es el único archivo que hay que tocar para ponerla en marcha.
+ * @type {Object}
+ */
 export const CONFIG = {
   // Textos de la cabecera
   centro: 'IES Lacimurga',

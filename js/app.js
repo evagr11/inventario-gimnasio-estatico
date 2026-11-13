@@ -1,3 +1,7 @@
+/**
+ * @module app
+ * @description Interfaz de la web. Toda la página se crea con `h()`, que usa `textContent`: ningún dato de la hoja se inserta como HTML (protección contra XSS).
+ */
 /* =====================================================================
    Interfaz de la web del inventario.
    Toda la página se construye con el ayudante h(), que crea elementos con
@@ -14,11 +18,22 @@ import {
 import { aCSVExcel } from './csv.js';
 import { qrSVG } from './qr.js';
 
+/**
+ * Estado de la web: el modelo cargado, la fecha de los datos y si vienen de la copia local.
+ * @type {Object}
+ */
 const estado = { modelo: null, fecha: null, desdeCopia: false };
 const $ = (sel) => document.querySelector(sel);
 const fmt = new Intl.NumberFormat('es-ES');
 
 /* ---------- Ayudante para crear elementos de forma segura ---------- */
+/**
+ * Crea un elemento HTML de forma segura.
+ * @param {string} tag etiqueta.
+ * @param {Object} [attrs] atributos; `class`, `style`, `dataset` y los que empiezan por `on` (eventos) se tratan aparte.
+ * @param {...*} hijos elementos o textos hijos.
+ * @returns {HTMLElement}
+ */
 function h(tag, attrs = {}, ...hijos) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -32,6 +47,11 @@ function h(tag, attrs = {}, ...hijos) {
   anadir(el, hijos);
   return el;
 }
+/**
+ * Añade hijos a un elemento; los textos se añaden como nodos de texto.
+ * @param {HTMLElement} el elemento.
+ * @param {Array} hijos hijos, también anidados.
+ */
 function anadir(el, hijos) {
   hijos.flat(Infinity).forEach((c) => {
     if (c == null || c === false) return;
@@ -41,11 +61,22 @@ function anadir(el, hijos) {
 const vaciar = (el, ...hijos) => { el.replaceChildren(); anadir(el, hijos); return el; };
 
 /* ---------- Rutas (#/…) ---------- */
+/**
+ * Lee la ruta de la dirección (`#/vista/id?parámetros`).
+ * @returns {{vista: string, id: string, params: URLSearchParams}}
+ */
 function leerRuta() {
   const [ruta, query = ''] = location.hash.replace(/^#\/?/, '').split('?');
   const partes = ruta.split('/').map((p) => { try { return decodeURIComponent(p); } catch { return p; } });
   return { vista: partes[0] || 'inventario', id: partes[1] || '', params: new URLSearchParams(query) };
 }
+/**
+ * Construye un enlace interno `#/vista/id?parámetros`.
+ * @param {string} vista vista.
+ * @param {string} [id] identificador.
+ * @param {?Object} [params] parámetros; los vacíos se omiten.
+ * @returns {string}
+ */
 function enlace(vista, id = '', params = null) {
   let s = `#/${vista}${id ? `/${encodeURIComponent(id)}` : ''}`;
   if (params) {
@@ -58,21 +89,40 @@ function enlace(vista, id = '', params = null) {
 }
 const ir = (destino) => { if (location.hash !== destino) location.hash = destino; else pintar(); };
 
+/**
+ * Dirección completa de una ubicación, la que llevan los QR de las etiquetas.
+ * @param {string} codigo código de la ubicación.
+ * @returns {string}
+ */
 function urlUbicacion(codigo) {
   const base = CONFIG.urlPublica || `${location.origin}${location.pathname}`;
   return `${base.replace(/#.*$/, '')}#/ubicacion/${encodeURIComponent(codigo)}`;
 }
 
 /* ---------- Piezas reutilizables ---------- */
+/**
+ * @param {?Object} cat categoría.
+ * @returns {HTMLElement} etiqueta con el nombre y el color de la categoría.
+ */
 function chipCategoria(cat) {
   if (!cat || !cat.ruta.length) return h('span', { class: 'chip chip-gris' }, 'Sin categoría');
   return h('span', { class: 'chip', style: { '--chip': cat.color || '#e6e1da' } }, cat.nombre);
 }
+/**
+ * @param {Object} est estado.
+ * @param {number} [cantidad] unidades en ese estado.
+ * @returns {HTMLElement} etiqueta del estado con su color.
+ */
 function chipEstado(est, cantidad) {
   return h('span', { class: 'chip-estado', style: { '--estado': est.color } },
     h('span', { class: 'punto', 'aria-hidden': 'true' }),
     cantidad != null ? `${est.nombre}: ${fmt.format(cantidad)}` : est.nombre);
 }
+/**
+ * @param {?Object} u ubicación.
+ * @param {boolean} [enlaces=true] si cada nivel es un enlace.
+ * @returns {HTMLElement} la ruta «Almacén › Estantería › Balda».
+ */
 function rutaUbicacion(u, enlaces = true) {
   if (!u) return h('span', { class: 'tenue' }, 'Sin ubicación');
   return h('span', { class: 'ruta-ubi' }, u.ruta.map((x, i) => [
@@ -80,6 +130,12 @@ function rutaUbicacion(u, enlaces = true) {
     enlaces ? h('a', { href: enlace('ubicacion', x.codigo) }, x.nombre) : x.nombre,
   ]));
 }
+/**
+ * Foto del material o, si no tiene o no carga, el icono de su categoría.
+ * @param {Object} m material.
+ * @param {boolean} [grande=false] tamaño grande, para la ficha.
+ * @returns {HTMLElement}
+ */
 function miniatura(m, grande = false) {
   const contenedor = h('div', { class: grande ? 'foto-grande' : 'miniatura', style: { '--fondo-cat': m.categoria.color || '#e9e4dd' } });
   const icono = m.categoria.ruta[0]?.icono || '📦';
@@ -92,19 +148,39 @@ function miniatura(m, grande = false) {
   return contenedor;
 }
 const textoDisponibles = (d, t) => `${fmt.format(d)} ${d === 1 ? 'disponible' : 'disponibles'} de ${fmt.format(t)}`;
+/**
+ * @param {string} titulo título.
+ * @param {string} [texto] explicación.
+ * @param {HTMLElement} [accion] botón o enlace.
+ * @returns {HTMLElement} mensaje de «no hay resultados».
+ */
 function vacio(titulo, texto, accion) {
   return h('div', { class: 'vacio' }, h('div', { class: 'vacio-icono', 'aria-hidden': 'true' }, '🔍'),
     h('h3', {}, titulo), texto ? h('p', {}, texto) : null, accion || null);
 }
+/**
+ * @param {string} titulo título.
+ * @param {number} valor cifra.
+ * @param {string} sub texto debajo.
+ * @returns {HTMLElement} tarjeta con una cifra del resumen.
+ */
 function tarjetaDato(titulo, valor, sub) {
   return h('div', { class: 'dato' }, h('div', { class: 'dato-titulo' }, titulo),
     h('div', { class: 'dato-valor' }, fmt.format(valor)), h('div', { class: 'dato-sub' }, sub));
 }
+/**
+ * @param {string} tipo «error», «aviso» o «ok».
+ * @param {...*} contenido contenido.
+ * @returns {HTMLElement} caja de aviso.
+ */
 function aviso(tipo, ...contenido) {
   return h('div', { class: `aviso aviso-${tipo}`, role: tipo === 'error' ? 'alert' : 'status' }, ...contenido);
 }
 
 /* ---------- Barra lateral ---------- */
+/**
+ * Pinta la barra lateral con el árbol de categorías y marca la vista actual.
+ */
 function pintarLateral() {
   const { modelo } = estado;
   const ruta = leerRuta();
@@ -153,6 +229,11 @@ function pintarLateral() {
 }
 
 /* ---------- Vista: inventario ---------- */
+/**
+ * Listado de materiales con buscador, filtros, orden, resumen y paginación.
+ * @param {URLSearchParams} params filtros de la dirección.
+ * @returns {HTMLElement[]}
+ */
 function vistaInventario(params) {
   const { modelo } = estado;
   const f = {
@@ -272,6 +353,12 @@ function vistaInventario(params) {
   ];
 }
 
+/**
+ * @param {number} actual página actual.
+ * @param {number} total número de páginas.
+ * @param {Function} irA recibe la página elegida.
+ * @returns {?HTMLElement} los botones de página, o `null` si solo hay una.
+ */
 function paginacion(actual, total, irA) {
   const nums = [];
   for (let i = 1; i <= total; i++) {
@@ -286,6 +373,11 @@ function paginacion(actual, total, irA) {
 }
 
 /* ---------- Vista: detalle de material ---------- */
+/**
+ * Ficha de un material: foto, datos y existencias por variante, ubicación y estado.
+ * @param {string} codigo código del material.
+ * @returns {HTMLElement[]}
+ */
 function vistaMaterial(codigo) {
   const m = estado.modelo.materiales.get(clave(codigo));
   if (!m || !m.visible) {
@@ -346,9 +438,17 @@ function vistaMaterial(codigo) {
 }
 
 /* ---------- Vista: ubicaciones ---------- */
+/**
+ * @param {Object} u ubicación.
+ * @returns {number} unidades guardadas en ella y en las que cuelgan de ella.
+ */
 function unidadesEn(u) {
   return u.lineas.reduce((s, l) => s + (l.material.visible ? l.cantidad : 0), 0) + u.hijos.reduce((s, x) => s + unidadesEn(x), 0);
 }
+/**
+ * Árbol de ubicaciones con las unidades de cada una.
+ * @returns {HTMLElement[]}
+ */
 function vistaUbicaciones() {
   const arbol = (lista) => h('ul', { class: 'arbol' }, lista.filter((u) => u.activa).map((u) => h('li', {},
     h('a', { class: 'arbol-item', href: enlace('ubicacion', u.codigo) },
@@ -365,6 +465,12 @@ function vistaUbicaciones() {
   ];
 }
 
+/**
+ * Contenido de una ubicación, la página a la que lleva el QR de cada estantería.
+ * @param {string} codigo código de la ubicación.
+ * @param {URLSearchParams} params opciones de la dirección.
+ * @returns {HTMLElement[]}
+ */
 function vistaUbicacion(codigo, params) {
   const u = estado.modelo.ubicaciones.get(clave(codigo));
   if (!u) {
@@ -412,6 +518,11 @@ function vistaUbicacion(codigo, params) {
 }
 
 /* ---------- Vista: etiquetas QR ---------- */
+/**
+ * Etiquetas con QR de las ubicaciones elegidas, listas para imprimir.
+ * @param {URLSearchParams} params ubicaciones marcadas.
+ * @returns {HTMLElement[]}
+ */
 function vistaEtiquetas(params) {
   const todas = [...estado.modelo.ubicaciones.values()].sort((a, b) =>
     a.ruta.map((x) => x.nombre).join('/').localeCompare(b.ruta.map((x) => x.nombre).join('/'), 'es', { numeric: true }));
@@ -469,6 +580,10 @@ function vistaEtiquetas(params) {
 }
 
 /* ---------- Vista: avisos de datos ---------- */
+/**
+ * Problemas encontrados en la hoja (filas repetidas, padres que no existen…).
+ * @returns {HTMLElement[]}
+ */
 function vistaAvisos() {
   const a = estado.modelo.avisos;
   return [
@@ -480,6 +595,9 @@ function vistaAvisos() {
 }
 
 /* ---------- Pintar la vista actual ---------- */
+/**
+ * Pinta la vista de la dirección actual, o un aviso si hay un error.
+ */
 function pintar() {
   const main = $('#contenido');
   if (!estado.modelo) return;
@@ -508,6 +626,9 @@ function pintar() {
 }
 
 /* ---------- Exportar ---------- */
+/**
+ * Descarga un CSV para Excel con los materiales que se están viendo.
+ */
 function exportar() {
   if (!estado.modelo) return;
   const r = leerRuta();
@@ -522,6 +643,10 @@ function exportar() {
 }
 
 /* ---------- Arranque ---------- */
+/**
+ * Descarga los datos, construye el modelo y pinta la página; si falla, enseña el error con un botón para reintentar.
+ * @async
+ */
 async function cargar() {
   const main = $('#contenido');
   vaciar(main, h('div', { class: 'cargando', role: 'status' }, h('div', { class: 'girador', 'aria-hidden': 'true' }), 'Cargando inventario…'));
@@ -538,6 +663,9 @@ async function cargar() {
   }
 }
 
+/**
+ * Pone los textos de la configuración, conecta el buscador, los botones y los atajos de teclado, registra el service worker y carga los datos.
+ */
 function iniciar() {
   document.querySelectorAll('[data-centro]').forEach((el) => { el.textContent = CONFIG.centro; });
   document.querySelectorAll('[data-subtitulo]').forEach((el) => { el.textContent = CONFIG.subtitulo; });

@@ -1,3 +1,7 @@
+/**
+ * @module datos
+ * @description Modelo del inventario a partir de las cinco hojas: categorías y ubicaciones en árbol, estados y materiales con sus existencias. Son funciones puras, sin DOM, y se prueban con Node.
+ */
 /* =====================================================================
    Modelo de datos del inventario.
    Recibe las cinco hojas (ya convertidas a objetos) y construye un modelo
@@ -10,10 +14,25 @@
 
 import { quitarAcentos } from './csv.js';
 
+/**
+ * Nombres de las cinco hojas.
+ * @type {string[]}
+ */
 export const HOJAS = ['categorias', 'estados', 'ubicaciones', 'materiales', 'existencias'];
 
+/**
+ * Normaliza un texto para compararlo: sin acentos, en minúsculas y con un solo espacio.
+ * @param {string} s texto.
+ * @returns {string} clave normalizada.
+ */
 export const clave = (s) => quitarAcentos(String(s ?? '').trim().toLowerCase()).replace(/\s+/g, ' ');
 
+/**
+ * Interpreta un sí o un no escrito en la hoja («sí», «x», «1», «no», «0»…).
+ * @param {string} valor texto de la celda.
+ * @param {boolean} [porDefecto=true] valor si la celda está vacía o no se entiende.
+ * @returns {boolean}
+ */
 export function siNo(valor, porDefecto = true) {
   const v = clave(valor);
   if (v === '') return porDefecto;
@@ -23,6 +42,12 @@ export function siNo(valor, porDefecto = true) {
 }
 
 const COLOR_HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+/**
+ * Acepta solo colores hexadecimales (#abc o #aabbcc).
+ * @param {string} c color escrito en la hoja.
+ * @param {?string} porDefecto color si no es válido.
+ * @returns {?string}
+ */
 export const colorSeguro = (c, porDefecto) => (COLOR_HEX.test(String(c ?? '').trim()) ? c.trim() : porDefecto);
 
 /**
@@ -42,11 +67,23 @@ export function urlImagenSegura(valor) {
   return null;
 }
 
+/**
+ * Convierte a número un entero positivo escrito en la hoja.
+ * @param {string} v texto.
+ * @returns {number} el número, o `NaN` si no es un entero.
+ */
 const entero = (v) => {
   const s = String(v ?? '').trim().replace(/\s/g, '');
   return /^\d+$/.test(s) ? Number(s) : NaN;
 };
 
+/**
+ * Enlaza cada elemento con su padre y sus hijos, calcula su ruta desde la raíz y detecta padres que no existen y ciclos.
+ * @param {Object[]} lista categorías o ubicaciones.
+ * @param {string} nombreHoja nombre de la hoja, para los avisos.
+ * @param {string[]} avisos lista donde se añaden los problemas encontrados.
+ * @returns {Map<string, Object>} elementos por clave.
+ */
 function arbol(lista, nombreHoja, avisos) {
   // lista: [{ k, padreK, ... }] → asigna .padre, .hijos, .ruta y detecta ciclos
   const porK = new Map(lista.map((n) => [n.k, n]));
@@ -77,6 +114,11 @@ function arbol(lista, nombreHoja, avisos) {
   return porK;
 }
 
+/**
+ * Construye el modelo completo: categorías, estados, ubicaciones y materiales, con las cantidades calculadas siempre a partir de las existencias, y la lista de avisos sobre la hoja.
+ * @param {Object<string, Object[]>} hojas filas de cada hoja.
+ * @returns {Object} el modelo del inventario.
+ */
 export function construirModelo(hojas) {
   const avisos = [];
 
@@ -260,6 +302,12 @@ export function construirModelo(hojas) {
 }
 
 const ORDEN_TALLAS = ['xxs', '2xs', 'xs', 's', 'm', 'l', 'xl', 'xxl', '2xl', 'xxxl', '3xl', '4xl'];
+/**
+ * Ordena tallas de ropa (XS, S, M, L…) y, si no lo son, por orden natural.
+ * @param {string} a primera talla.
+ * @param {string} b segunda talla.
+ * @returns {number} negativo, 0 o positivo, como en `sort`.
+ */
 export function compararTallas(a, b) {
   const ka = clave(a); const kb = clave(b);
   const ia = ORDEN_TALLAS.indexOf(ka); const ib = ORDEN_TALLAS.indexOf(kb);
@@ -275,6 +323,12 @@ export function enCategoria(m, kCategoria) {
   return m.categoria.ruta.some((c) => c.k === kCategoria);
 }
 
+/**
+ * Materiales visibles que cumplen la búsqueda y los filtros de categoría, estado y disponibilidad.
+ * @param {Object} modelo modelo del inventario.
+ * @param {Object} [filtros] texto, categoria, estado y disponibilidad («si» o «no»).
+ * @returns {Object[]} materiales que cumplen los filtros.
+ */
 export function filtrar(modelo, { texto = '', categoria = '', estado = '', disponibilidad = '' } = {}) {
   const palabras = clave(texto).split(' ').filter(Boolean);
   return [...modelo.materiales.values()].filter((m) => {
@@ -290,6 +344,12 @@ export function filtrar(modelo, { texto = '', categoria = '', estado = '', dispo
   });
 }
 
+/**
+ * Ordena materiales por nombre (en los dos sentidos), disponibles, total o categoría.
+ * @param {Object[]} lista materiales.
+ * @param {string} [criterio="nombre"] criterio de orden.
+ * @returns {Object[]} copia ordenada de la lista.
+ */
 export function ordenar(lista, criterio = 'nombre') {
   const porNombre = (a, b) => a.nombre.localeCompare(b.nombre, 'es', { numeric: true });
   const f = {
